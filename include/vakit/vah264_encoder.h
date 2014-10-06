@@ -50,7 +50,8 @@ public:
 private:
 
     int32_t _compute_current_frame_type( uint32_t currentFrameNum,
-                                         int32_t intraPeriod ) const;
+                                         int32_t intraPeriod,
+                                         vah264_encoder_frame_type type ) const;
 
     void _update_reference_frames();
     void _update_ref_pic_list();
@@ -79,7 +80,9 @@ private:
     int32_t _constraintSetFlag;
     int32_t _h264EntropyMode;
     int32_t _frameWidth;
+    int32_t _frameWidthMBAligned;
     int32_t _frameHeight;
+    int32_t _frameHeightMBAligned;
     uint32_t _frameBitRate;
     int32_t _intraPeriod;
     uint64_t _currentIDRDisplay;

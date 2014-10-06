@@ -39,7 +39,9 @@ vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
     _constraintSetFlag( 0 ),
     _h264EntropyMode( 1 ), /* cabac */
     _frameWidth( 0 ),
+    _frameWidthMBAligned( 0 ),
     _frameHeight( 0 ),
+    _frameHeightMBAligned( 0 ),
     _frameBitRate( 0 ),
     _intraPeriod( 15 ),
     _currentIDRDisplay( 0 ),
@@ -53,19 +55,15 @@ vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
 {
     if( !options.width.is_null() )
     {
-        int32_t fw = options.width.value();
-        if( fw != (fw + 15) & (~15) )
-            CK_THROW(( "width is required to be a multiple of the macroblock width." ));
         _frameWidth = options.width.value();
+        _frameWidthMBAligned = (_frameWidth + 15) & (~15);
     }
     else CK_THROW(( "Required option missing: width" ));
 
     if( !options.height.is_null() )
     {
-        int32_t fh = options.height.value();
-        if( fh != (fh + 15) & (~15) )
-            CK_THROW(( "height is required to be a multiple of the macroblock height." ));
         _frameHeight = options.height.value();
+        _frameHeightMBAligned = (_frameHeight + 15) & (~15);
     }
     else CK_THROW(( "Required option missing: height" ));
 
@@ -140,8 +138,8 @@ vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
     /* create source surfaces */
     status = vaCreateSurfaces( _display,
                                VA_RT_FORMAT_YUV420,
-                               _frameWidth,
-                               _frameHeight,
+                               _frameWidthMBAligned,
+                               _frameHeightMBAligned,
                                &_srcSurfaceID,
                                1,
                                NULL,
@@ -152,8 +150,8 @@ vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
     /* create reference surfaces */
     status = vaCreateSurfaces( _display,
                                VA_RT_FORMAT_YUV420,
-                               _frameWidth,
-                               _frameHeight,
+                               _frameWidthMBAligned,
+                               _frameHeightMBAligned,
                                &_refSurfaceIDs[0],
                                NUM_REFERENCE_FRAMES,
                                NULL,
@@ -168,8 +166,8 @@ vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
     /* Create a context for this encode pipe */
     status = vaCreateContext( _display,
                               _configID,
-                              _frameWidth,
-                              _frameHeight,
+                              _frameWidthMBAligned,
+                              _frameHeightMBAligned,
                               VA_PROGRESSIVE,
                               tmp_surfaceid,
                               2,
@@ -183,7 +181,7 @@ vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
     status = vaCreateBuffer( _display,
                              _contextID,
                              VAEncCodedBufferType,
-                             (_frameWidth * _frameHeight * 400) / (16*16),
+                             (_frameWidthMBAligned * _frameHeightMBAligned * 400) / (16*16),
                              1,
                              NULL,
                              &_codedBufID );
@@ -217,7 +215,8 @@ void vah264_encoder::encode_yuv420p( shared_ptr<av_packet> input,
     _upload_image( input->map(), image, _frameWidth, _frameHeight );
 
     _currentFrameType = _compute_current_frame_type( _currentFrameNum,
-                                                  _intraPeriod );
+                                                     _intraPeriod,
+                                                     type );
 
     if( _currentFrameType == FRAME_IDR )
     {
@@ -321,16 +320,30 @@ shared_ptr<ck_memory> vah264_encoder::get_extra_data() const
 }
 
 int32_t vah264_encoder::_compute_current_frame_type( uint32_t currentFrameNum,
-                                                     int32_t intraPeriod ) const
+                                                     int32_t intraPeriod,
+                                                     vah264_encoder_frame_type type ) const
 {
-    if( (currentFrameNum % intraPeriod) == 0 )
+    if( type == FRAME_TYPE_AUTO_GOP )
     {
-        if( currentFrameNum == 0 )
-            return FRAME_IDR;
-        else return FRAME_I;
-    }
+        if( (currentFrameNum % intraPeriod) == 0 )
+        {
+            if( currentFrameNum == 0 )
+                return FRAME_IDR;
+            else return FRAME_I;
+        }
 
-    return FRAME_P;
+        return FRAME_P;
+    }
+    else
+    {
+        if( type == FRAME_TYPE_KEY )
+        {
+            if( currentFrameNum == 0 )
+                return FRAME_IDR;
+            else return FRAME_I;
+        }
+        else return FRAME_P;
+    }
 }
 
 void vah264_encoder::_update_reference_frames()
@@ -368,8 +381,8 @@ void vah264_encoder::_render_sequence()
     VAEncMiscParameterRateControl *misc_rate_ctrl;
 
     _seqParam.level_idc = 41 /*SH_LEVEL_3*/;
-    _seqParam.picture_width_in_mbs = _frameWidth / 16;
-    _seqParam.picture_height_in_mbs = _frameHeight / 16;
+    _seqParam.picture_width_in_mbs = _frameWidthMBAligned / 16;
+    _seqParam.picture_height_in_mbs = _frameHeightMBAligned / 16;
     _seqParam.bits_per_second = _frameBitRate * 1024 * 8;
     _seqParam.intra_period = _intraPeriod;
     _seqParam.intra_idr_period = _intraPeriod;
@@ -384,6 +397,15 @@ void vah264_encoder::_render_sequence()
     _seqParam.seq_fields.bits.frame_mbs_only_flag = 1;
     _seqParam.seq_fields.bits.chroma_format_idc = 1;
     _seqParam.seq_fields.bits.direct_8x8_inference_flag = 1;
+
+    if( _frameWidth != _frameWidthMBAligned || _frameHeight != _frameHeightMBAligned )
+    {
+        _seqParam.frame_cropping_flag = 1;
+        _seqParam.frame_crop_left_offset = 0;
+        _seqParam.frame_crop_right_offset = (_frameWidthMBAligned - _frameWidth) / 2;
+        _seqParam.frame_crop_top_offset = 0;
+        _seqParam.frame_crop_bottom_offset = (_frameHeightMBAligned - _frameHeight) / 2;
+    }
 
     status = vaCreateBuffer( _display,
                              _contextID,
@@ -554,7 +576,7 @@ void vah264_encoder::_render_slice()
 
     /* one frame, one slice */
     _sliceParam.macroblock_address = 0;
-    _sliceParam.num_macroblocks = _frameWidth * _frameHeight/(16*16); /*Measured by MB*/
+    _sliceParam.num_macroblocks = _frameWidthMBAligned * _frameHeightMBAligned/(16*16); /*Measured by MB*/
     _sliceParam.slice_type = (_currentFrameType == FRAME_IDR)?2:_currentFrameType;
     _sliceParam.slice_qp_delta = 0;
 
