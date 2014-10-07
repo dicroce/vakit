@@ -12,8 +12,10 @@ extern "C"
 #include "cppkit/ck_types.h"
 #include "cppkit/ck_socket.h"
 #include "cppkit/ck_memory.h"
+#include "cppkit/ck_string.h"
 #include "avkit/av_packet.h"
 #include "avkit/options.h"
+#include "avkit/frame_types.h"
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -26,18 +28,15 @@ const size_t NUM_REFERENCE_FRAMES = 16;
 class vah264_encoder
 {
 public:
-    enum vah264_encoder_frame_type
-    {
-        FRAME_TYPE_KEY,
-        FRAME_TYPE_PARTIAL,
-        FRAME_TYPE_AUTO_GOP
-    };
 
-    vah264_encoder( const struct avkit::codec_options& options, bool annexB = true );
+    vah264_encoder( const struct avkit::codec_options& options,
+                    const cppkit::ck_string& devicePath,
+                    bool annexB = true );
+
     virtual ~vah264_encoder() throw();
 
     void encode_yuv420p( std::shared_ptr<avkit::av_packet> input,
-                         vah264_encoder_frame_type type = FRAME_TYPE_AUTO_GOP );
+                         avkit::encoder_frame_type type = avkit::FRAME_TYPE_AUTO_GOP );
 
     std::shared_ptr<avkit::av_packet> get();
 
@@ -51,7 +50,7 @@ private:
 
     int32_t _compute_current_frame_type( uint32_t currentFrameNum,
                                          int32_t intraPeriod,
-                                         vah264_encoder_frame_type type ) const;
+                                         avkit::encoder_frame_type type ) const;
 
     void _update_reference_frames();
     void _update_ref_pic_list();
@@ -61,6 +60,7 @@ private:
     void _render_slice();
     void _upload_image( uint8_t* yv12, VAImage& image, uint16_t width, uint16_t height );
 
+    cppkit::ck_string _devicePath;
     bool _annexB;
     int _fd;
     VADisplay _display;

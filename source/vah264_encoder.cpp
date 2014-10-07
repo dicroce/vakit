@@ -20,9 +20,11 @@ const int32_t FRAME_I = 2;
 const int32_t FRAME_IDR = 7;
 
 vah264_encoder::vah264_encoder( const struct avkit::codec_options& options,
+                                const cppkit::ck_string& devicePath,
                                 bool annexB ) :
+    _devicePath( devicePath ),
     _annexB( annexB ),
-    _fd( open( "/dev/dri/card0", O_RDWR ) ),
+    _fd( open( _devicePath.c_str(), O_RDWR ) ),
     _display( (VADisplay)vaGetDisplayDRM( _fd ) ),
     _h264Profile( VAProfileH264High ),
     _configID( 0 ),
@@ -207,7 +209,7 @@ vah264_encoder::~vah264_encoder() throw()
 }
 
 void vah264_encoder::encode_yuv420p( shared_ptr<av_packet> input,
-                                     vah264_encoder_frame_type type )
+                                     avkit::encoder_frame_type type )
 {
     VAImage image;
     vaDeriveImage( _display, _srcSurfaceID, &image );
@@ -321,7 +323,7 @@ shared_ptr<ck_memory> vah264_encoder::get_extra_data() const
 
 int32_t vah264_encoder::_compute_current_frame_type( uint32_t currentFrameNum,
                                                      int32_t intraPeriod,
-                                                     vah264_encoder_frame_type type ) const
+                                                     avkit::encoder_frame_type type ) const
 {
     if( type == FRAME_TYPE_AUTO_GOP )
     {
